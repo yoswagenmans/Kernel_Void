@@ -1,0 +1,296 @@
+
+<meta charset="utf-8" emacsmode="-*- markdown -*-">
+<div style="font-size: 30; font-weight: bold; text-align: center;">Kernel Void</div>
+
+Introduction
+===============================================================================
+
+Kernel Void aims to take the classic backyard pastime into the digital age. Our project is a simulation of Cornhole, where players can toss a bag with the objective of having it land/slide into a hole. The game system will allow any two players to play a real-time game of cornhole over the internet (regardless of their location). The game unit (for a single player) consists of an ESP “bag” (which the player holds) and an LED board as a target placed 10 m away from the player. These two devices will be connected to a user interface online, where a player can see the cornhole board and track the path of incoming bag tosses.
+
+![Full System Video](https://youtu.be/Hj2gwkAD7ug)
+
+
+Functionality
+===============================================================================
+
+ 
+Pairing
+-------------------------------------------------------------------------------
+
+
+When a game is started with a POST request to the system, it generates a unique game ID. Upon startup on the beanbag device, the user is asked to enter the desired game ID. The numbers are iterated through by tilting the device, and the desired game ID is locked in by pressing button 1.
+ 
+Calibration
+-------------------------------------------------------------------------------
+
+On a user's first turn, the handheld beanbag device will prompt them to calibrate the device. When this happens, the user will lay the device flat on a table and hold down button 1 until the acceleration readings on the display stabilize. They can then release the button, and these offsets will be used to eliminate drift throughout their throw.
+
+Minigame
+-------------------------------------------------------------------------------
+
+On the onset of each turn, the player is presented with a minigame on the beanbag display to determine the lateral outcome of the following throw. The display shows the outline of a cornhole board, with a red line moving quickly band and forth across the screen. The objective is to hit button 2 when the line is as close as possible to the center of the board, where the hole is located. If the line is off the board when the user hits button 2, the throw will be a miss. Otherwise, the bag will land somewhere along the line.
+
+Throw
+-------------------------------------------------------------------------------
+
+After the minigame, the user will then hold down button 1 as they swing the device in an underhand throw motion, releasing the button at the moment of would-be beanbag release.
+
+Web display
+-------------------------------------------------------------------------------
+
+The web component then renders this throw from two perspectives. The overhead view shows the outline of the cornhole board, and shows the course of the throw as a dotted line, ending in a circle which represents the beanbag at its final location. The side view then shows the arc of the trajectory of the beanbag through the air, landing at its final position. The scoreboard shows the current point totals for each of the two players associated with the current game, along with the current game state (whose turn it is).
+
+LED board
+-------------------------------------------------------------------------------
+
+The led board, placed around 10 meters away is a physical representation of a cornhole board but on a smaller scale. If your throw is on the board, a corresponding set of leds will light up with your respective color. Additionally, there is an animation if your beanbag makes it in the hole.
+
+
+Turns/game
+-------------------------------------------------------------------------------
+
+We are following conventional cornhole rules with two players where players are racing to reach 21 or more points - this is a single game. Within a full game, there are “frames” where each player throws four beanbags in an alternating fashion with the other player. By the end of the “frame,” the bags that are in the hole or on the board are counted towards each player’s score. 1 point is given for bags on the cornhole board (officially known as a “woody”) and 3 points are given for a bag that falls into the hole in the board (officially known as a “cornhole”).
+
+
+Documentation
+===============================================================================
+Full system diagram
+-------------------------------------------------------------------------------
+
+
+
+
+<iframe src="https://drive.google.com/file/d/1TlAQqy9dbZ3eIpncNkjxhOkOMdv0TeiK/preview" width="640" height="480"></iframe>
+
+Hardware layout 
+-------------------------------------------------------------------------------
+
+Each player’s “set” consists of two physical components—the handheld beanbag device and the LED board.
+
+The beanbag is an ESP32 with a standard LCD display, IMU, and 2 buttons—wired at 45 and 39. The first is used to record throws and control game settings, and the latter is used exclusively for the minigame.
+
+The board consists of two LED boards that connect directly to the ESP32. The LED boards’ wires are soldered onto other wires that are plugged into the bread board. The LED board only requires one connection to digital pin, ground pin and 3V3 pin.
+
+Parts list
+-------------------------------------------------------------------------------
+ 
+8 X 32 LED Matrix
+ 
+	Total Price: $88 
+	Description: 4 x led matrix grid
+	Use: 2 led matrices were used per cornhole board
+
+Design Challenges and Decisions
+===============================================================================
+Overall game functionality
+-------------------------------------------------------------------------------
+
+
+To implement the LED board, web display, and electronic beanbag we realized early on that the game would require a decent amount of networking to perpetually share game state information to and from individual components. In order to make the sharing of information the easiest, the high-level game controller was implemented as a series of python scripts on the server. This allowed for a database to be used to statefully progress through games even if the beanbags accidentally reset, and for multiple different games to be ran at the same time using multiple disconnected beanbag controllers.
+
+Beanbag recording
+-------------------------------------------------------------------------------
+
+To try to emulate the throw of a beanbag for the game, we decided to use an IMU to measure the velocity of the player’s hand to generate the velocity data for the game. To allow the player to choose when they ‘let go’ of the bag, we also had a button to control the release of the beanbag. 
+
+Early on, we realized that the horizontal drift of the IMU relative to the player-gameboard axis was much greater than the control the player had in directing the beanbag left or right, potentially leading for a frustrating experience trying to land the beanbags on the board. To this end, we compromised with the realness we wanted to give the throw by giving the player a minigame to determine how much horizontal drift the beanbag will have. 
+
+Later on, we found that the accelerometer’s readings on the IMU to be too variable and affected by gravity for the player reliably replicate and adjust throws in response to information based on misses. After extensively trying to troubleshoot the issue with coding fixes, we implemented a version using the gyroscope and angular velocity instead. This was more resilient to the influence of gravity, so we found it much easier to replicate and adjust throw speed to get better at hitting the board over time.
+
+Game state machine diagram
+-------------------------------------------------------------------------------
+
+<iframe src="https://drive.google.com/file/d/11WnWCsXgP5CXGiPVkKAFXa8v1vR3nayb/preview" width="640" height="480"></iframe>
+
+
+
+Detailed code layout
+===============================================================================
+
+
+beanbag_fsm.ino
+-------------------------------------------------------------------------------
+
+The beanbag_fsm.ino file contains the code for playing the game on the ESP32 beanbag. 
+
+The beanbag_fsm begins in a calibration phase that lasts as long as the user holds down a button connected to pin 45. During the calibration phase, the shift is collected through an infinite average on the IMU’s inputs as the user is shown the current average. Once the average slow in their changing, the user should let go as the averages of shifts have settled.
+
+The next higher level state is the game_id specification state. Players select the game_id they wish to play on by tilting the ESP beanbag left for lower and right for higher values. They press a button connected to pin 45 to lock in their choice. 
+
+After this, the ESP is in the general game. In the first wait_state = 0, the ESP uses the poll_server() method to continually send GET requests to the server to get the game state and then uses check_if_turn() to check if it’s this player’s turn to throw. It will progress to the next wait_state = 1 when this is true. 
+
+In wait_state = 1, the minigame function is called. A small minigame is displayed on screen where a vertical line oscillates back and forth over a representation of the cornhole board, where the user can press a button connected to pin 39 to lock in the horizontal offset the beanbag’s flight will have relative to the board as shown by the vertical line’s final position when they press the button. Once this offset is locked, the wait_state progresses to 2. 
+
+Wait_state = 2 is where a throw is actually recorded. When the player presses and holds the button connected to pin 45, the ESP begins recording the IMU’s gyroscope internal angular acceleration with respect to the axis perpendicular to the player’s arm if the player holds the ESP facing up, palm up in their hand. That value is then integrated to get rotational velocity, which is then sent to the server as horizontal velocity. In the end, we decided to hold vertical velocity constant to make the throwing experience more consistent in that it purely tied to how hard a player swings the ESP, rather than also the release angle as well. This final value is then POSTed to server_fsm.py along with the horizontal offset as the parameters for this beanbag’s flight. The beanbag then transitions back to state 0 where it wait for it’s turn or gameover. 
+
+cornhole_game.ino 
+-------------------------------------------------------------------------------
+
+The software implementation of the LED board used a simple FSM to function properly
+
+<iframe src="https://drive.google.com/file/d/18K72jkQoixZfAp4cJS109TojptdVGvpJ/preview" width="640" height="480"></iframe>
+
+The start state just sends a GET request to the server in order to retrieve a valid game id. The start state can only be entered from the base state, when “state 5” is detected (indicating the end of a game and the beginning of another). The base state continuously sends a GET request with a valid game id in order to retrieve a game state. Furthermore, the base state is responsible for parsing the data it gets back from the server and detecting changes in state. When a new throw id is detected (or state 5), the board must update itself since there is a new beanbag (or the end of a game). When a change in state is detected in the base state, the board transitions to the updateBoard state where the board re-renders. In this state, board flashes are initiated and new bags are rendered. After this state is finished with its duty, the board automatically transitions back to the base state.
+
+Server-side
+===============================================================================
+​​
+Server_fsm.py
+-------------------------------------------------------------------------------
+The server_fsm.py file has the core of the gameplay logic. It contains the overall game state machine shown above, and the starting webpage to initialize new games, shown below.
+
+<iframe src="https://drive.google.com/file/d/1oSwGtOk2t4vd0BYn0IvGNGD4UGGIfKec/preview" width="640" height="480"></iframe>
+
+When the submit button is pressed, a POST request with the ‘type=start’ parameter is sent to the server_fsm.py request_handler function with the players’ names. Those player names are associated with a new unique game_id that is then stored in a sqlite3 database test.db under the table ‘players’. Two other entries for that game_id are stored in two more tables, ‘games’ which stores the game state and scores of the game of game_id, and ‘game_bags’ which stores the unique ids associated with each beanbag when it’s POSTed by a player.
+
+Players are only allowed to POST throws to a game_id when their username matches the player whose turn it is. The most recent gamestate and beanbag throw_ids are found by finding the most recent entries associated with a given game_id. The players turns alternate until each has thrown 4 bags each, when the server_fsm.py calls the  score(bags) function imported from physics.py to tally up the score of each player and add to the player with the most points the difference between their scores. If either player’s score exceeds 11 points by the end of a round, that player has won and the game does not progress anymore and only returns “[victor] has won.” with victor replaced with the winning player’s name.
+
+A GET request with the parameter of ‘game_id’ gives the player names, throw_ids and score associated with the current board state of the game_id that was sent as a parameter.
+
+
+. 
+physics.py
+-------------------------------------------------------------------------------
+
+The entry point into the physics code is the request handler, which handles one type of POST request and three types of GET requests. 
+
+The POST request takes in x_pc, the output of the minigame as a float between 0 and 1, or -1 for a miss, the y velocity, the z velocity, and the throw ID. x_pc, vy, and vz are then passed into the projection function, which calculates the position of the bag upon landing. This calculation from the kinematics equation Δz = vz0t - 0.5gt2 to find the airtime of the projectile and Δy = vyt + 0.5at^t to get the distance of the throw, where the acceleration is due to air resistance, calculated as -0.5CDRv2A/M, where CD is a physical constant, R is the density of air, v is the velocity of the projectile, A is the estimated cross-sectional area, and M is the mass. The lateral position Δx is scaled from the minigame output. The projection function returns a tuple (dx, dy). The throw data—throw ID, minigame output, and velocities—are then added to the throw table in the physics database, and the position info—throw ID, x position and y position—are added to the end_location table in the physics database. Then, the get_slide function is called, which calculates how far the beanbag would slide on the board. This is found from the free body diagram and related calculations shown in the week 3 deliverables. This distance is then passed into implement_slide. The implement_slide function first calls get_others, passing in the throw ID. This function then iterates through the game state database test.py, finding all other bags in play by returning a list of all bags with the same associated game ID as the given throw ID. Back in implement_slide the position of the original bag is updated in the database, then, this list is used to find any other bags which would be pushed by the thrown bag (i.e. are within a bag’s width and the slide distance on the board). From that set of bags, the closest is recursively passed into implement_slide, until all affected bags are pushed forward.
+
+The first type of GET request is pos_info, which calls get_pos for a given throw ID, and returns the most recent (x, y) coordinate pair from the end_location table of the database. As it goes by the most recent update, the get_pos function will always account for slide.
+
+The second type of GET request is throw_info, which returns the velocity values and minigame output for a given throw ID, as found in the throws table of the physics database. 
+
+The final type of GET request is board_info, which also takes in a throw ID, and returns a converted coordinate value indexable by the LED board for bags on the board, the special value (-1, -1) for values off the board, as calculated by the on_board function, and the special value (-1, 0) for bags which have scored, as calculated by the in_hole function.
+
+The only functionality of physics.py which is not accessed through request_handler is the score function, which is directly imported by server_fsm. The function takes in a list of beanbags, and sums the associated point_val for each throw ID, by use of the position result of get_pos, to add 3 points for each bag in the hole, 1 point for each bag on the board, and 0 points for all missed bags.
+
+
+Scoreboard.py
+-------------------------------------------------------------------------------
+
+The file scoreboard.py serves to render the online component of Kernel Void: the top-down view, the side view, and the scoreboard/game status.  The top-down view shows a cornhole board scaled down appropriately for the screen and it displays all the beanbags located on the board with a dashed line showing the trajectory of the most recent throw. The scoreboard shows both players’ scores and the current game state, for example “Player 1’s turn”
+
+Game Information
+-------------------------------------------------------------------------------
+### Game_state
+The most recent entry in the games table with a given game code retrieved by sqlite3 call to game database, which contains a timestamp, game id, game state, player 1 score, and player 2 score.
+
+### Player_info
+
+Player information of a specified game (by game id). Contains the names of the two players.
+
+### Throw_info
+
+The most recent entry in the game_bags table with a given game code containing all the throw ids in sequence. The tuple is ordered by player 1’s first, second, third, and fourth throw then player 2’s first, second, third, and fourth throw. If a throw id is zero, then the throw has not been made yet.
+
+Functions
+-------------------------------------------------------------------------------
+ ###  on_board(point_coord, box)
+
+Function taken from physics.py to determine if a given beanbag coordinate location is on the cornhole board. Point_coord is a tuple with x and y coordinates, and box is the coordinates of the board.
+
+###  in_hole(point_coord, hole)
+
+Function taken from physics.py to determine if a given beanbag coordinate location is in the hole of the cornhole board. Point_coord is a tuple with x and y coordinates, and box is the coordinates of the board.
+
+###  queryGameData(game_state, player_info, throw_info)
+
+Given the game information described above, parses the data and returns a tuple containing which players turn, the player names, the player scores, and a status message. The gameMessage gets the id of the last throw and determines if the bag went on the board, in the hole, or missed the board, then appends the appropriate message. The function also checks the game state to see if the game is over (when the game state has reached 5) and adds a message indicating the winner (or if there was a tie).
+
+###  renderGameInfo(data)
+
+Given the tuple returned by queryGameData, renderGameInfo inserts the information in the appropriate locations of the HTML code, which can then be returned and displayed on the web page.
+
+###  queryData(game_state, player_info, throw_info)
+
+Given the game information in the same format as queryGameData, parses the data and returns the throw information to render the top and side view of the board. Using the throw ids in throw_info, the end locations are fetched from the beanbag database. Then, to render the line for the latest throw, the most recent throw id and the respective z-velocity is found to render the side view. The end locations, the id of the latest throw, and the z velocity of the latest throw are returned in a tuple.
+
+###  renderThrow(data)
+
+Given the tuple from queryData, the latest throw line is rendered by finding the location of the latest throw and drawing a dashed line to it. The function returns the HTML code to render the line in the canvas component.
+
+###  renderBag(x, y, id, player)
+
+Given an x and y coordinate to a beanbag, the id of the throw, and the player who threw it, returns an HTML component to render the beanbag. The player argument will either be zero or one, indicating if player one or two threw the bag. Player one’s bags are always blue, and player two’s bags are always red. 
+
+###  renderSide(data):
+
+Given the tuple from queryData, the function returns an HTML component rendering the side view trajectory.
+
+The side view required a quadratic curve element, which takes in the final x and y of the curve and the x and y of the Bezier control point, which, for our parabola, was the point where the initial throw vector intersects the vertical line at the peak of the parabola. The x coordinate (midpoint) is found at the point where the y velocity is 0, at t = vy/a, or x = vxvv/a. The y coordinate is then found as the y coordinate of the point with that x coordinate on a line where the slope is vy/vx and the y-intercept is the initial throw height of 1 meter.
+
+### renderAll(data)
+
+Given the tuple from queryData, renders all the bags using renderBag and the latest throw using renderThrow. All the components are combined into a single HTML string and returned. 
+
+### request_handler(request)
+
+Initially, when a GET request is made, the user is prompted with a form to enter a game code, which will make a post request when submitted. If the game code is valid, the post request will contain the information to render the game information. Otherwise, an error page is displayed, and the user must return to the original page to enter the game code. When a POST request is made, the rendering functions are called and inserted into an HTML template of the entire page. Once all the data has been acquired, the final component is displayed on the webpage.
+
+
+Milestone contributions
+===============================================================================
+
+
+Week 1
+-------------------------------------------------------------------------------
+
+Minigame:
+
+<iframe src="https://drive.google.com/file/d/1jgQIfPPUSysUHlx3oq_Yf_nW6RSbD8Yi/preview" width="640" height="480"></iframe>
+
+
+Week 2
+-------------------------------------------------------------------------------
+
+![Serverside FSM](https://www.youtube.com/watch?v=wHOi3ZNin6M)
+
+
+
+Initial serverside physics code:
+
+<iframe src="https://drive.google.com/file/d/1GtUlAyUId0aqKZMUHRM61fzhWov871Jg/preview" width="640" height="480"></iframe>
+
+<iframe src="https://drive.google.com/file/d/17Kag4nAd7RdortS3nYwpm_EX4QmKalcd/preview" width="640" height="480"></iframe>
+
+<iframe src="https://drive.google.com/file/d/1vannneGEBpTl06XEbYjrGvBEBbN_9m3K/preview" width="640" height="480"></iframe>
+
+<iframe src="https://drive.google.com/file/d/1uTPsHoBr0dA_-A_-5tCPT_atyGZWsqGx/preview" width="640" height="480"></iframe>
+
+<iframe src="https://drive.google.com/file/d/1I4hwwRVFJH_qJ16wKzADm6SjUWLSmJNT/preview" width="640" height="480"></iframe>
+
+Week 3
+-------------------------------------------------------------------------------
+
+Integrated Minigame, score tallying, and game_id selector for electronic beanbag - 
+![Week 3 deliverable](https://youtube.com/shorts/V-QrmG78yqA?feature=share
+)
+
+Slide physics:
+
+
+<iframe src="https://drive.google.com/file/d/1OWWyfv4A930YoNfSWcwXkn0YuD15m4Fs/preview" width="640" height="480"></iframe>
+
+Week 4
+-------------------------------------------------------------------------------
+
+Example of scoreboard of ongoing/finished games:
+
+<iframe src="https://drive.google.com/file/d/1XDiOu5kFZ3FVCG58H7XKX-HKpLwUYcL4/preview" width="640" height="480"></iframe>
+
+
+<iframe src="https://drive.google.com/file/d/1t3of7bf4xQdcvQplHwvvaH9R928CiFIS/preview" width="640" height="480"></iframe>
+
+
+
+Team Members
+===============================================================================
+
+* Chloe Langley	
+* Yos Wagenmans
+* Nick Dow
+* Collin Wen
+* John Mose
+
+
+<!-- Markdeep: --><style class="fallback">body{visibility:hidden;white-space:pre;font-family:monospace}</style><script src="markdeep.min.js"></script><script src="https://casual-effects.com/markdeep/latest/markdeep.min.js?"></script><script>window.alreadyProcessedMarkdeep||(document.body.style.visibility="visible")</script>
